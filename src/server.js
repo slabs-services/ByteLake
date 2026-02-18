@@ -4,7 +4,8 @@ import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
 import { ObjectMetadata, PutObject } from './routes/object.js';
 import { CreateLake } from './routes/lake.js';
-import { CheckOwner, ValidatePermissions } from './routes/security.js';
+import { AssociateDNS, CheckOwner, ValidatePermissions } from './routes/security.js';
+import { authMiddlewareUser } from './Middlewares/Client.js';
 dotenv.config();
 
 const fastify = Fastify();
@@ -30,7 +31,8 @@ const SFTP_CONFIG = {
 };
 
 fastify.post('/fileUpload/:lakeId', { preHandler: fastify.multipart }, async (req, res) => { return PutObject(req, res, SFTP_CONFIG); });
-fastify.post('/createLake', (req, res) => { return CreateLake(req, res, SFTP_CONFIG); });
+fastify.post('/createLake', { preHandler: authMiddlewareUser }, (req, res) => { return CreateLake(req, res, SFTP_CONFIG); });
+fastify.post('/attachDomain', { preHandler: authMiddlewareUser }, AssociateDNS);
 fastify.get('/object/:objectId', ObjectMetadata);
 fastify.get('/objectPermission', ValidatePermissions);
 fastify.get('/checkOwner', CheckOwner);

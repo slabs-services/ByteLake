@@ -1,6 +1,7 @@
 import { slugify, updateBindSerial } from "../Utils.js";
 import SftpClient from 'ssh2-sftp-client';
 import { Client } from "ssh2";
+import { v4 as uuidv4 } from 'uuid';
 
 export async function CreateLake(req, res, sftpConfig){
     const { lakeName, isPrivate } = req.body;
@@ -9,12 +10,18 @@ export async function CreateLake(req, res, sftpConfig){
         return res.status(400).send({ error: 'Lake name is required' });
     }
 
+    if(req.iamData.fsId !== "urn:slabs:iam:fs:bytelake:create"){
+        res.status(400).send({ error: "You dont have permission to invoke this cloud function." });
+        return;
+    }
+
     const slug = slugify(lakeName);
 
     const sftpFolder = new SftpClient();
     sftpFolder.connect(sftpConfig)
     .then(() => sftpFolder.mkdir(`/usr/bytelake/${slug}`, true))
-    .then(() => req.server.db.query('INSERT INTO lakes (id, name, path, isPrivate) VALUES (?, ?, ?, ?)', ["urn:slabs:bytelake:" + slug, lakeName, slug, isPrivate]))
+    .then(() => req.server.db.query('INSERT INTO lakes (id, name, path, isPrivate, ownerId) VALUES (?, ?, ?, ?, ?)', ["urn:slabs:bytelake:" + slug, lakeName, slug, isPrivate, req.iamData.userId]))
+    .then(() => req.server.db.query('INSERT INTO hosts (id, host, lakeId) VALUES (?, ?, ?)', [uuidv4(), slug + ".lake.tryspacelabs.pt", "urn:slabs:bytelake:" + slug]))
     .then(() => res.send({ created: true, lakeName: "urn:slabs:bytelake:" + slug }))
     .catch(err => {
       console.error('Lake creation failed', err);

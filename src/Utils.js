@@ -52,3 +52,35 @@ export function getBearerToken(req) {
   }
   return h.slice("Bearer ".length).trim();
 }
+
+export function isValidDNSName(name) {
+  if (typeof name !== "string"){
+    return false;
+  }
+
+  if (name.endsWith(".")) {
+    name = name.slice(0, -1);
+  }
+
+  if (name.length === 0 || name.length > 253){
+    return false;
+  }
+
+  const labels = name.split(".");
+
+  for (const label of labels) {
+    if (label.length === 0 || label.length > 63){
+      return false;
+    }
+
+    if (!/^[a-zA-Z0-9-]+$/.test(label)){
+      return false;
+    }
+
+    if (label.startsWith("-") || label.endsWith("-")){
+      return false;
+    }
+  }
+
+  return true;
+}

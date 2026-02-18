@@ -1,5 +1,6 @@
-import { getPubKey } from "../Utils.js";
+import { getPubKey, isValidDNSName } from "../Utils.js";
 import jwt from "jsonwebtoken";
+import { v4 as uuidv4 } from 'uuid';
 
 export async function CheckOwner(req, reply) {
     if(req.host !== 'storage.bytelake.slabs.pt'){
@@ -11,9 +12,15 @@ export async function CheckOwner(req, reply) {
     const resourceName = req.query.resourceName;
     const accountRequested = req.query.accountRequested;
 
-    if(!resourceName || !accountRequested){
+    if(!accountRequested){
         return reply.status(400).send({
             "message": "Missing Resource Name or Account Requested"
+        });
+    }
+
+    if(resourceName === ""){
+        return reply.status(200).send({
+            "message": "Owner OK"
         });
     }
 
@@ -128,5 +135,30 @@ export async function ValidatePermissions(req, res) {
         return res.header('X-Lake-Root', lakeMetadata[0][0].path).send('ok');
     } catch (err) {
         return res.status(403).send("Forbidden");
+    }
+}
+
+export async function AssociateDNS(req, reply) {
+    const dnsName = req.body.dnsName;
+    const lakeId = req.iamData.resourceName;
+
+    const [object] = await req.server.db.query('SELECT id FROM lakes WHERE id = ?', [lakeId]);
+
+    if(!object){
+        return reply.status(404).send({ error: 'Lake not found' });
+    }
+
+    if(!dnsName){
+        return reply.status(400).send({ error: 'DNS name is required' });
+    }
+
+    if(!isValidDNSName(dnsName)){
+        return reply.status(400).send({ error: 'DNS name is not valid' });
+    }
+
+    await req.server.db.query('INSERT INTO hosts (id, host, lakeId) VALUES (?, ?, ?)', [uuidv4(), dnsName, lakeId]);
+
+    return {
+        status: "dns pointer created"
     }
 }
