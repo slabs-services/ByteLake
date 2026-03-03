@@ -2,8 +2,11 @@ import { v4 as uuidv4 } from 'uuid';
 import SftpClient from 'ssh2-sftp-client';
 import { pipeline } from 'stream/promises';
 import path from "path";
+import fs from "fs";
 import jwt from "jsonwebtoken";
-import { getBearerToken, getPubKey } from '../Utils.js';
+import { getBearerToken, getPubKey, IAM_URL } from '../Utils.js';
+
+const privateKey = fs.readFileSync("keys/iam.key", "utf8");
 
 export async function PutObject(req, reply, sftpConfig) {
     const { lakeId } = req.params;
@@ -35,6 +38,28 @@ export async function PutObject(req, reply, sftpConfig) {
     if(decoded.singleTarget){
         if(decoded.fsId !== "urn:slabs:iam:fs:bytelake:put" || decoded.resourceName !== lakeId){
             return reply.code(403).send({ message: "Invalid Permission" });
+        }
+
+        const verifyToken = jwt.sign({}, privateKey, {
+            algorithm: "RS256",
+            header: {
+                kid: "urn:slabs:iam:serviceaccount:bytelake-cp"
+            },
+            expiresIn: "10s"
+        });        
+
+        if(decoded.maxUsages !== 0 && decoded.maxUsages){
+            const checkTRL = await fetch(IAM_URL + "/useTokenWithTRL?tui=" + decoded.jti + "&maxUsages=" + decoded.maxUsages + "&expiresAt=" + decoded.exp,
+                {
+                    headers: {
+                        Authorization: `Bearer ${verifyToken}`
+                    }
+                }
+            ).then(res => res.json()).catch(() => ({ isAllowed: false }));
+
+            if(!checkTRL.isAllowed){
+                return reply.code(403).send({ message: "Token has been revoked" });
+            }
         }
     }else{
         const roles = decoded.roles;
