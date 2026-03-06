@@ -84,5 +84,3 @@ export function isValidDNSName(name) {
 
   return true;
 }
-
-export const IAM_URL = "http://trust.iam.slabs.pt";

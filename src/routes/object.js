@@ -2,11 +2,8 @@ import { v4 as uuidv4 } from 'uuid';
 import SftpClient from 'ssh2-sftp-client';
 import { pipeline } from 'stream/promises';
 import path from "path";
-import fs from "fs";
 import jwt from "jsonwebtoken";
-import { getBearerToken, getPubKey, IAM_URL } from '../Utils.js';
-
-const privateKey = fs.readFileSync("keys/iam.key", "utf8");
+import { getBearerToken, getPubKey } from '../Utils.js';
 
 export async function PutObject(req, reply, sftpConfig) {
     const { lakeId } = req.params;
@@ -40,25 +37,27 @@ export async function PutObject(req, reply, sftpConfig) {
             return reply.code(403).send({ message: "Invalid Permission" });
         }
 
-        const verifyToken = jwt.sign({}, privateKey, {
-            algorithm: "RS256",
-            header: {
-                kid: "urn:slabs:iam:serviceaccount:bytelake-cp"
-            },
-            expiresIn: "10s"
-        });        
+        const maxUsages = decoded.extras?.maxUsages;
 
-        if(decoded.maxUsages !== 0 && decoded.maxUsages){
-            const checkTRL = await fetch(IAM_URL + "/useTokenWithTRL?tui=" + decoded.jti + "&maxUsages=" + decoded.maxUsages + "&expiresAt=" + decoded.exp,
-                {
-                    headers: {
-                        Authorization: `Bearer ${verifyToken}`
+        if (typeof maxUsages === "number" && maxUsages > 0) {
+            try {
+                const [trlInfo] = await req.server.db.query("SELECT usages FROM tokensRevoked WHERE tokenId = ?", [decoded.jti]);
+
+                if(trlInfo.length === 0){
+                    await req.server.db.query("INSERT INTO tokensRevoked (tokenId, usages, createdAt, expiresAt) VALUES (?, ?, ?, ?)", [decoded.jti, 1, new Date(), new Date((decoded.exp*1000)+10000)]);
+                }else{
+                    const currentUsages = trlInfo[0].usages;
+
+                    if(currentUsages >= decoded.extras.maxUsages){
+                        return reply.status(401).send({ message: 'Maximum usage limit reached' });
                     }
-                }
-            ).then(res => res.json()).catch(() => ({ isAllowed: false }));
 
-            if(!checkTRL.isAllowed){
-                return reply.code(403).send({ message: "Token has been revoked" });
+                    await req.server.db.query("UPDATE tokensRevoked SET usages = ? WHERE tokenId = ?", [currentUsages + 1, decoded.jti]);
+                }
+
+            } catch (err) {
+                console.error("Error occurred while fetching TRL info:", err);
+                return res.status(500).send({ error: "Internal server error" });
             }
         }
     }else{
