@@ -84,3 +84,33 @@ export function isValidDNSName(name) {
 
   return true;
 }
+
+export function isValidUrlSegment(name) {
+  if (typeof name !== "string"){
+    return false;
+  }
+
+  const regex = /^[A-Za-z0-9._-]+$/;
+
+  return regex.test(name);
+}
+
+export async function getFolderSubtree(db, folderId, lakeId) {
+    const [rows] = await db.query(`
+        WITH RECURSIVE subtree AS (
+            SELECT id, name, path, isFolder, parentId, lakeId
+            FROM objects
+            WHERE id = ? AND lakeId = ? AND isFolder = 1
+
+            UNION ALL
+
+            SELECT o.id, o.name, o.path, o.isFolder, o.parentId, o.lakeId
+            FROM objects o
+            INNER JOIN subtree s ON o.parentId = s.id
+        )
+        SELECT id, name, path, isFolder, parentId, lakeId
+        FROM subtree
+    `, [folderId, lakeId]);
+
+    return rows;
+}
