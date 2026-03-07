@@ -7,6 +7,7 @@ import { CreateLake } from './routes/lake.js';
 import { AssociateDNS, CheckOwner, ValidatePermissions } from './routes/security.js';
 import { authMiddlewareUser } from './Middlewares/Client.js';
 import { CreateFolder, DeleteFolder, MoveFolder, RenameFolder } from './routes/folders.js';
+import { CreateMultipart } from './routes/multipart.js';
 dotenv.config();
 
 const fastify = Fastify();
@@ -24,7 +25,7 @@ const pool = mysql.createPool({
 fastify.decorate("db", pool);
 
 await fastify.register(multipart, {
-  limits: { fileSize: 1000 * 1024 * 1024 },
+  limits: { fileSize: 20 * 1024 * 1024 },
 });
 
 const SFTP_CONFIG = {
@@ -46,6 +47,7 @@ fastify.post('/moveFolder', { preHandler: authMiddlewareUser }, (req, res) => { 
 fastify.post('/attachDomain', { preHandler: authMiddlewareUser }, AssociateDNS);
 fastify.get('/object/:objectId', ObjectMetadata);
 fastify.get('/objectPermission', ValidatePermissions);
+fastify.post('/createMultipart', { preHandler: authMiddlewareUser }, CreateMultipart);
 fastify.get('/checkOwner', CheckOwner);
 
 await fastify.listen({ host: '127.0.0.1', port: 8080 });

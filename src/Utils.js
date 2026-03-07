@@ -1,3 +1,5 @@
+import fs from "fs";
+
 export function slugify(str) {
   return str
     .normalize("NFD")
@@ -114,3 +116,12 @@ export async function getFolderSubtree(db, folderId, lakeId) {
 
     return rows;
 }
+
+export const IAM_URL = "http://trust.iam.slabs.pt";
+export const BYTELAKE_URL = "http://api.bytelake.slabs.pt";
+
+export const privateKey = fs.readFileSync("keys/iam.key", "utf8");
+
+const KB = 1024;
+export const MB = 1024 * KB;
+export const GB = 1024 * MB;
