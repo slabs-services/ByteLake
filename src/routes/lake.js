@@ -12,7 +12,7 @@ export async function CreateLake(req, res, sftpConfig){
 
     if(req.iamData.singleTarget){
         if(req.iamData.fsId !== "urn:slabs:iam:fs:bytelake:create"){
-            res.status(400).send({ error: "You dont have permission to invoke this cloud function." });
+            res.status(400).send({ error: "You dont have permission to create a bytelake." });
             return;
         }
 
