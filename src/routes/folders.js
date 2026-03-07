@@ -113,24 +113,6 @@ export async function CreateFolder(req, res, SFTP_CONFIG) {
         return res.code(404).send({ error: "Lake not found" });
     }
 
-    let query;
-    let params;
-
-    if (parentId == null) {
-        query = "SELECT id FROM objects WHERE lakeId = ? AND name = ? AND parentId IS NULL AND isFolder = 1";
-        params = [targetURN, folderName];
-    } else {
-        query = "SELECT id FROM objects WHERE lakeId = ? AND name = ? AND parentId = ? AND isFolder = 1";
-        params = [targetURN, folderName, parentId];
-    }
-
-    const [folderPath] = await req.server.db.query(query, params);
-
-    if(folderPath.length > 0){
-        return res.code(400).send({ error: "Folder with the same name already exists in the target location" });
-    }
-
-    const localId = uuidv4();
     let parentPath = null;
 
     if (parentId) {
@@ -146,6 +128,24 @@ export async function CreateFolder(req, res, SFTP_CONFIG) {
         parentPath = parentRows[0].path;
     }
 
+    let query;
+    let params;
+
+    if (parentId == null) {
+        query = "SELECT id FROM objects WHERE lakeId = ? AND name = ? AND parentId IS NULL AND isFolder = 1";
+        params = [targetURN, folderName.trim()];
+    } else {
+        query = "SELECT id FROM objects WHERE lakeId = ? AND name = ? AND parentId = ? AND isFolder = 1";
+        params = [targetURN, folderName.trim(), parentId];
+    }
+
+    const [folderPath] = await req.server.db.query(query, params);
+
+    if(folderPath.length > 0){
+        return res.code(400).send({ error: "Folder with the same name already exists in the target location" });
+    }
+
+    const localId = uuidv4();
     const smallRemoteDir = `${parentPath ? parentPath + "/" : ""}${folderName.trim()}`;
     const remoteDir = `/usr/bytelake/${lakeRows[0].path}/${smallRemoteDir}`;
     const folderId = "urn:slabs:bytelake:" + lakeRows[0].path + ":" + localId;
