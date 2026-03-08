@@ -8,6 +8,7 @@ import { AssociateDNS, CheckOwner, ValidatePermissions } from './routes/security
 import { authMiddlewareUser } from './Middlewares/Client.js';
 import { CreateFolder, DeleteFolder, MoveFolder, RenameFolder } from './routes/folders.js';
 import { AbortMultipart, CompletePartsUpload, CreateMultipart, GetMissingParts, UploadPart } from './routes/multipart.js';
+import cors from "@fastify/cors";
 dotenv.config();
 
 const fastify = Fastify();
@@ -26,6 +27,11 @@ fastify.decorate("db", pool);
 
 await fastify.register(multipart, {
   limits: { fileSize: 20 * 1024 * 1024 },
+});
+
+await fastify.register(cors, {
+  origin: true,
+  methods: ["GET", "POST", "DELETE", "OPTIONS"],
 });
 
 const SFTP_CONFIG = {

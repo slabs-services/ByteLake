@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import SftpClient from 'ssh2-sftp-client';
 import { GB, getBearerToken, IAM_URL, isValidUrlSegment, MB, privateKey, getPubKey } from "../Utils.js";
 import { Client } from "ssh2";
+import { pipeline } from "stream/promises";
 
 export async function CreateMultipart(req, res) {
     const { name, lakeId, fileSize, partSize, folder, maxTime } = req.body;
@@ -139,6 +140,32 @@ export async function CreateMultipart(req, res) {
         }
     }
 
+    let virtualDir = "";
+
+    if(folder){
+        const [parentRows] = await req.server.db.query(
+            "SELECT path FROM objects WHERE id = ? AND lakeId = ? AND isFolder = 1",
+            [folder, lakeId]
+        );
+
+        if (!parentRows || parentRows.length === 0) {
+            return reply.code(404).send({ error: "Parent folder not found" });
+        }
+
+        virtualDir = parentRows[0].path;
+    }
+
+    const virtualPath = `${virtualDir ? virtualDir + "/" : ""}${name}`;
+
+    const [fileAlreadyExists] = await req.server.db.query(
+        "SELECT id FROM objects WHERE lakeId = ? AND path = ?",
+        [lakeId, virtualPath]
+    );
+
+    if (fileAlreadyExists.length > 0) {
+        return reply.code(400).send({ error: "File with the same name already exists in the target location" });
+    }
+
     const multipartId = "urn:slabs:bytelake:multipart:" + uuidv4();
 
     await req.server.db.query("INSERT INTO multipart (id, name, lakeId, totalParts, folder, createdAt) VALUES (?, ?, ?, ?, ?, ?)", [multipartId, name, lakeId, totalParts, folder || null, new Date()]);
@@ -228,10 +255,10 @@ export async function UploadPart(req, res, SFTP_CONFIG) {
 
     if (typeof maxUsages === "number" && maxUsages > 0) {
         try {
-            const [trlInfo] = await req.server.db.query("SELECT usages FROM tokensRevoked WHERE tokenId = ? AND fsId = ?", [decoded.tokenId, "urn:slabs:iam:fs:bytelake:upload-part"]);
+            const [trlInfo] = await req.server.db.query("SELECT usages FROM tokensRevoked WHERE tokenId = ? AND fsId = ?", [decoded.jti, "urn:slabs:iam:fs:bytelake:upload-part"]);
 
             if(trlInfo.length === 0){
-                await req.server.db.query("INSERT INTO tokensRevoked (tokenId, usages, createdAt, expiresAt, fsId) VALUES (?, ?, ?, ?, ?)", [decoded.tokenId, 1, new Date(), new Date((decoded.exp*1000)+10000), "urn:slabs:iam:fs:bytelake:upload-part"]);
+                await req.server.db.query("INSERT INTO tokensRevoked (tokenId, usages, createdAt, expiresAt, fsId) VALUES (?, ?, ?, ?, ?)", [decoded.jti, 1, new Date(), new Date((decoded.exp*1000)+10000), "urn:slabs:iam:fs:bytelake:upload-part"]);
             }else{
                 const currentUsages = trlInfo[0].usages;
 
@@ -239,7 +266,7 @@ export async function UploadPart(req, res, SFTP_CONFIG) {
                     return res.code(401).send({ message: 'Maximum usage limit reached' });
                 }
 
-                await req.server.db.query("UPDATE tokensRevoked SET usages = ? WHERE tokenId = ? AND fsId = ?", [currentUsages + 1, decoded.tokenId, "urn:slabs:iam:fs:bytelake:upload-part"]);
+                await req.server.db.query("UPDATE tokensRevoked SET usages = ? WHERE tokenId = ? AND fsId = ?", [currentUsages + 1, decoded.jti, "urn:slabs:iam:fs:bytelake:upload-part"]);
             }
 
         } catch (err) {
@@ -263,8 +290,8 @@ export async function UploadPart(req, res, SFTP_CONFIG) {
     try {
         await sftp.connect(SFTP_CONFIG);
 
-        sftp.mkdir("/usr/bytelake-parts/" + multipartId, true).catch(() => { return res.status(500).send({ error: "Failed to create multipart directory on SFTP" }); });
-        const remoteWriteStream = sftp.createWriteStream("/usr/bytelake-parts/" + multipartId + "/" + partId, { flags: "w" });
+        await sftp.mkdir("/usr/bytelake-parts/" + multipartId.replaceAll(":","-"), true).catch(() => { return res.status(500).send({ error: "Failed to create multipart directory on SFTP" }); });
+        const remoteWriteStream = sftp.createWriteStream("/usr/bytelake-parts/" + multipartId.replaceAll(":","-") + "/" + partId, { flags: "w" });
 
         await pipeline(file.file, remoteWriteStream);
 
@@ -289,6 +316,7 @@ export async function UploadPart(req, res, SFTP_CONFIG) {
             partId: objectId
         });
     } catch (err) {
+        console.log(err);
         return res.code(500).send({ error: "SFTP upload failed" });
     } finally {
         try { await sftp.end(); } catch {}
@@ -381,13 +409,14 @@ export async function GetMissingParts(req, res) {
     }
 
     const missingParts = await req.server.db.query("SELECT partNumber FROM multipartObjects WHERE multipartId = ?", [multipartId]).then(res => {
-        const uploadedParts = res[0].map(row => row.partNumber);
         const totalParts = multipartInfo.totalParts;
         const missing = [];
 
-        for(let i = 1; i <= totalParts; i++){
-            if(!uploadedParts.includes(i)){
-                missing.push(i);
+        const uploaded = new Set(res[0].map(r => r.partNumber))
+
+        for(let i=1; i <= totalParts; i++){
+            if(!uploaded.has(i)){
+                missing.push(i)
             }
         }
 
@@ -484,9 +513,9 @@ export async function CompletePartsUpload(req, res) {
         }
     }
 
-    const countTotalParts = await req.server.db.query("SELECT id FROM multipartObjects WHERE multipartId = ? ORDER BY partNumber ASC", [multipartId]).then(res => res[0]);
+    const parts = await req.server.db.query("SELECT id FROM multipartObjects WHERE multipartId = ? ORDER BY partNumber ASC", [multipartId]).then(res => res[0]);
 
-    if(countTotalParts.length !== multipartInfo.totalParts){
+    if(parts.length !== multipartInfo.totalParts){
         return res.code(400).send({ error: "Not all parts have been uploaded" });
     }
 
@@ -506,32 +535,46 @@ export async function CompletePartsUpload(req, res) {
     }
 
     const finalPath = "/usr/bytelake/" + multipartInfo.path + "/" + (folderPath ? folderPath + "/" : "") + multipartInfo.name;
+    const concatenatedContent = "cat " + parts.map(p => "/usr/bytelake-parts/" + multipartId.replaceAll(":","-") + "/" + p.id.split(":").pop()).join(" ") + " > " + finalPath;
 
-    const concatenatedContent = "cat " + parts.map(p => "/usr/bytelake-parts/" + multipartId + "/" + p.id.split(":").pop()).join(" ") + " > " + finalPath;
-
-    const conn = new Client();
-    conn.on("ready", () => {
-        conn.exec(concatenatedContent, (err, stream) => {
-            if (err) {
-                console.error("Erro ao concatenar ficheiro:", err.message);
-                conn.end();
-                return;
-            }
-
-            stream.on("close", (code) => {
-                if (code !== 0) {
+    await new Promise((resolve, reject) => {
+        const conn = new Client();
+        conn.on("ready", async () => {
+            conn.exec(concatenatedContent, (err, stream) => {
+                if (err) {
                     conn.end();
-                    return;
+                    return reject(err);
                 }
-            });
+
+                let exitCode = null;
+
+                stream.on("data", () => {});
+
+                stream.on("exit", (code) => {
+                    exitCode = code;
+                });
+
+                stream.on("close", () => {
+                    conn.end();
+                    if (exitCode === 0) {
+                        resolve();
+                    } else {
+                        reject(new Error("CAT failed"));
+                    }
+                });
+
+                stream.stderr.on("data", (data) => {
+                    console.error("SSH STDERR:", data.toString());
+                });
+            })
+        }).on("error", e => console.error("Erro SSH:", e.message))
+        .connect({
+            host: process.env.SFTP_HOST,
+            port: Number(process.env.SFTP_PORT),
+            username: process.env.SFTP_USER,
+            password: process.env.SFTP_PASS
         });
-    }).on("error", e => console.error("Erro SSH:", e.message))
-    .connect({
-        host: process.env.SFTP_HOST,
-        port: Number(process.env.SFTP_PORT),
-        username: process.env.SFTP_USER,
-        password: process.env.SFTP_PASS
-    });
+    })
 
     const fileId = uuidv4();
     const objectId = `urn:slabs:bytelake:${multipartInfo.path}:${fileId}`;
@@ -545,7 +588,31 @@ export async function CompletePartsUpload(req, res) {
     await req.server.db.query("DELETE FROM multipartObjects WHERE multipartId = ?", [multipartId]);
     await req.server.db.query("DELETE FROM multipart WHERE id = ?", [multipartId]);
 
-    return res.code(200).send({
+    const connDelete = new Client();
+    connDelete.on("ready", () => {
+        connDelete.exec("rm -rf /usr/bytelake-parts/" + multipartId.replaceAll(":","-"), (err, stream) => {
+            if (err) {
+                console.error("Erro ao apagar multipart:", err.message);
+                connDelete.end();
+                return;
+            }
+
+            stream.on("close", (code) => {
+                if (code !== 0) {
+                    connDelete.end();
+                    return;
+                }
+            });
+        });
+    }).on("error", e => console.error("Erro SSH:", e.message))
+    .connect({
+        host: process.env.SFTP_HOST,
+        port: Number(process.env.SFTP_PORT),
+        username: process.env.SFTP_USER,
+        password: process.env.SFTP_PASS
+    });
+
+    res.code(200).send({
         uploaded: true,
         objectId,
         filePath: virtualPath,
@@ -594,12 +661,9 @@ export async function AbortMultipart(req, res) {
         }
     }
 
-    const multipartObjects = await req.server.db.query("SELECT id FROM multipartObjects WHERE multipartId = ?", [multipartId]).then(res => res[0]);
-    const multipartIds = multipartObjects.map(obj => obj.id.split(":").pop()).join(" ");
-
     const conn = new Client();
     conn.on("ready", () => {
-        conn.exec("rm " + "/usr/bytelake-parts/" + multipartId + " " + multipartIds, (err, stream) => {
+        conn.exec("rm -rf /usr/bytelake-parts/" + multipartId.replaceAll(":","-"), (err, stream) => {
             if (err) {
                 console.error("Erro ao concatenar ficheiro:", err.message);
                 conn.end();
