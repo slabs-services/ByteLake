@@ -7,7 +7,7 @@ import { CreateLake } from './routes/lake.js';
 import { AssociateDNS, CheckOwner, ValidatePermissions } from './routes/security.js';
 import { authMiddlewareUser } from './Middlewares/Client.js';
 import { CreateFolder, DeleteFolder, MoveFolder, RenameFolder } from './routes/folders.js';
-import { CreateMultipart } from './routes/multipart.js';
+import { AbortMultipart, CompletePartsUpload, CreateMultipart, GetMissingParts, UploadPart } from './routes/multipart.js';
 dotenv.config();
 
 const fastify = Fastify();
@@ -36,6 +36,7 @@ const SFTP_CONFIG = {
 };
 
 fastify.post('/fileUpload', { preHandler: fastify.multipart }, async (req, res) => { return PutObject(req, res, SFTP_CONFIG); });
+fastify.post('/uploadPart', { preHandler: fastify.multipart }, async (req, res) => { return UploadPart(req, res, SFTP_CONFIG); });
 fastify.post('/createLake', { preHandler: authMiddlewareUser }, (req, res) => { return CreateLake(req, res, SFTP_CONFIG); });
 fastify.post('/createFolder', { preHandler: authMiddlewareUser }, (req, res) => { return CreateFolder(req, res, SFTP_CONFIG); });
 fastify.delete('/deleteFolder', { preHandler: authMiddlewareUser }, (req, res) => { return DeleteFolder(req, res, SFTP_CONFIG); });
@@ -45,6 +46,9 @@ fastify.post('/renameObject', { preHandler: authMiddlewareUser }, (req, res) => 
 fastify.post('/moveObject', { preHandler: authMiddlewareUser }, (req, res) => { return MoveObject(req, res, SFTP_CONFIG); });
 fastify.post('/moveFolder', { preHandler: authMiddlewareUser }, (req, res) => { return MoveFolder(req, res, SFTP_CONFIG); });
 fastify.post('/attachDomain', { preHandler: authMiddlewareUser }, AssociateDNS);
+fastify.post('/missingParts', { preHandler: authMiddlewareUser }, GetMissingParts);
+fastify.post('/completeMultipart', { preHandler: authMiddlewareUser }, CompletePartsUpload);
+fastify.delete('/abortMultipart', { preHandler: authMiddlewareUser }, AbortMultipart);
 fastify.get('/object/:objectId', ObjectMetadata);
 fastify.get('/objectPermission', ValidatePermissions);
 fastify.post('/createMultipart', { preHandler: authMiddlewareUser }, CreateMultipart);

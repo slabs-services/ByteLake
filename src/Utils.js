@@ -118,7 +118,6 @@ export async function getFolderSubtree(db, folderId, lakeId) {
 }
 
 export const IAM_URL = "http://trust.iam.slabs.pt";
-export const BYTELAKE_URL = "http://api.bytelake.slabs.pt";
 
 export const privateKey = fs.readFileSync("keys/iam.key", "utf8");
 
