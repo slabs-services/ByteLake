@@ -161,6 +161,15 @@ export async function PutObject(req, reply, sftpConfig) {
         return reply.code(400).send({ error: "File with the same name already exists in the target location" });
     }
 
+    const [multipartAlreadyExists] = await req.server.db.query(
+        "SELECT id FROM multipart WHERE lakeId = ? AND name = ? AND folder " + (parentId ? "= ?" : "IS NULL"),
+        [lakeId, file.filename, ...(parentId ? [parentId] : [])]
+    );
+
+    if (multipartAlreadyExists.length > 0) {
+        return reply.code(400).send({ error: "A multipart upload with the same name already exists in the target location" });
+    }
+
     const remotePath = `/usr/bytelake/${lakePath}/${virtualPath}`;
 
     const sftp = new SftpClient();

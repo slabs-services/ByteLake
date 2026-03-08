@@ -166,6 +166,14 @@ export async function CreateMultipart(req, res) {
         return reply.code(400).send({ error: "File with the same name already exists in the target location" });
     }
 
+    let multipartExistsQuery = "SELECT id FROM multipart WHERE lakeId = ? AND name = ? AND folder " + (folder ? "= ?" : "IS NULL");
+    let multipartExistsParams = [lakeId, name, ...(folder ? [folder] : [])];
+    const multipartExists = await req.server.db.query(multipartExistsQuery, multipartExistsParams).then(res => res[0].length > 0);
+
+    if(multipartExists){
+        return res.status(400).send({ error: "A multipart upload with the same name already exists in the target location" });
+    }
+
     const multipartId = "urn:slabs:bytelake:multipart:" + uuidv4();
 
     await req.server.db.query("INSERT INTO multipart (id, name, lakeId, totalParts, folder, createdAt) VALUES (?, ?, ?, ?, ?, ?)", [multipartId, name, lakeId, totalParts, folder || null, new Date()]);
